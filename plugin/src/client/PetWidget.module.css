@@ -1,0 +1,849 @@
+/* Pet widget: the pet IS the whole widget. The overlay is click-through; the
+   pet opts back in. Hover reveals a floating rail of actions. */
+
+.pet {
+  /* Ink for anything filled solid with --pet-accent (an "on" action bubble, the
+     primary buttons in the input rows). It has to be a variable rather than a
+     literal: an accent is not always a mid-tone, and whale's accent is the
+     theme's brand fill itself — near-black under the light theme, near-white
+     under the dark one. A hardcoded dark ink on it painted a black disc with a
+     black icon inside it. */
+  --pet-on-accent: #10141c;
+  pointer-events: auto;
+  position: fixed;
+  right: 18px;
+  bottom: 14px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: inherit;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  cursor: grab;
+}
+.petDragging { cursor: grabbing; }
+/* Whale's accent is the theme's brand fill, which is a *neutral* in this design
+   system: rgb(15,17,21) light, rgb(249,250,251) dark. So she takes the theme's
+   own ink for that fill — white on the light theme's near-black, near-black on
+   the dark theme's near-white — instead of the dark default. The robot's amber
+   and silver-moon's blue are the same mid-tone in both themes, where dark ink is
+   the readable choice, so they keep the default. */
+.pet[data-avatar='whale'] {
+  --pet-accent: var(--dsw-alias-brand-primary, #4a6cf7);
+  --pet-on-accent: var(--dsw-alias-label-primary-foreground, #10141c);
+}
+.pet[data-avatar='robot'] { --pet-accent: var(--dsw-alias-state-warn-primary, #f5a524); }
+.pet[data-avatar='silver-moon'] { --pet-accent: var(--dsw-alias-state-business-primary, #9b8cff); }
+
+/* Colour variants.
+   Two systems meet here. The whale and the robot recolour their own art on a
+   canvas (see skin.ts), so for them these rules are only the stand-in used until
+   that lands — deliberately hue-free, because rotating the hue of the whole
+   sprite is exactly what made the first version read as a filter: it turned the
+   whale-girl's face pink and sent "mint" to magenta. The aura that goes with
+   each skin is here too, since it is a light behind the pet, not a change to it.
+   Silver-moon has no recipe: her variants are chroma plus a rim light, tuned
+   against her art by eye (below). */
+.pet[data-skin='classic'] { --pet-skin-filter: none; --pet-glow: transparent; }
+.pet[data-skin='sakura'] {
+  --pet-skin-filter: saturate(1.12);
+  --pet-glow: rgba(255, 150, 190, 0.55);
+}
+.pet[data-skin='mint'] {
+  --pet-skin-filter: saturate(0.9);
+  --pet-glow: rgba(90, 230, 190, 0.5);
+}
+.pet[data-skin='midnight'] {
+  --pet-skin-filter: brightness(0.82) saturate(0.92);
+  --pet-glow: rgba(120, 140, 255, 0.55);
+}
+.pet[data-skin='gold'] {
+  --pet-skin-filter: saturate(1.15) brightness(1.03);
+  --pet-glow: rgba(255, 205, 110, 0.6);
+}
+
+/* Silver-moon ships a human palette: a hue rotation turns her skin green and
+   wrecks the red sash, so her variants rotate no hue at all. They change the
+   chroma/brightness of the outfit and add a coloured rim light + aura instead,
+   which reads clearly while keeping her face recognisable. She has no entry in
+   skin.ts, so this is her whole skin system rather than a fallback. */
+.pet[data-avatar='silver-moon'][data-skin='sakura'] {
+  --pet-skin-filter: saturate(1.35) brightness(1.03) drop-shadow(0 0 5px rgba(255, 138, 186, 0.9));
+  --pet-glow: rgba(255, 138, 186, 0.62);
+}
+.pet[data-avatar='silver-moon'][data-skin='mint'] {
+  --pet-skin-filter: saturate(0.55) brightness(1.06) drop-shadow(0 0 5px rgba(92, 226, 190, 0.9));
+  --pet-glow: rgba(92, 226, 190, 0.58);
+}
+.pet[data-avatar='silver-moon'][data-skin='midnight'] {
+  --pet-skin-filter: brightness(0.78) saturate(0.75) drop-shadow(0 0 6px rgba(126, 146, 255, 0.95));
+  --pet-glow: rgba(126, 146, 255, 0.62);
+}
+.pet[data-avatar='silver-moon'][data-skin='gold'] {
+  --pet-skin-filter: saturate(1.45) brightness(1.05) drop-shadow(0 0 5px rgba(255, 200, 110, 0.95));
+  --pet-glow: rgba(255, 200, 110, 0.62);
+}
+
+/* Frozen while the tab is hidden: nobody is watching, so burn no frames. */
+.petPaused,
+.petPaused .sprite,
+.petPaused .petShadow,
+.petPaused .petIn,
+.petPaused .speechBubble,
+.petPaused .petGlow { animation-play-state: paused; }
+
+/* Soften pose / action switches with a quick scale+opacity ease-in. */
+.petIn {
+  display: block;
+  animation: petIn 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes petIn {
+  from { opacity: 0; transform: scale(0.86); }
+  62% { opacity: 1; transform: scale(1.04); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ── the character ────────────────────────────────────────────────────── */
+
+.petStage {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: grab;
+  /* The beat animation writes an inline transform here from its own frame loop.
+     It lives on the stage rather than on `.petIn` so it cannot fight that
+     element's pose-switch animation, which owns `transform` too. */
+  will-change: transform;
+}
+.petSprite {
+  border-radius: 14px;
+  filter: var(--pet-skin-filter, none);
+}
+/* Accent glow behind the character; the colour follows the active skin. */
+.petGlow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 210px;
+  height: 210px;
+  margin: -105px 0 0 -105px;
+  border-radius: 50%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(50% 50% at 50% 55%, var(--pet-glow, transparent), transparent 70%);
+  filter: blur(8px);
+  transition: background 220ms ease;
+}
+.petShadow {
+  width: 104px;
+  height: 15px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 50%, rgba(0, 0, 0, 0.30), transparent 72%);
+  filter: blur(1px);
+  animation: shadowPulse 4.2s ease-in-out infinite;
+}
+/* The shadow shrinks and lifts when the pet bobs up, grounding the float. */
+@keyframes shadowPulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(0.8); opacity: 0.55; }
+}
+
+/* The sprite base: background carried by inline style, animated by pose.
+   Every cutout is a clean transparent PNG, so no mask is needed — and skipping
+   it keeps the skin rim light (drop-shadow) from being clipped. */
+.sprite {
+  display: block;
+  background-repeat: no-repeat;
+  transform-origin: 50% 100%;
+  transition: transform 160ms ease;
+}
+.pet:hover .petSprite { transform: translateY(-3px); }
+
+/* Per-pose flourish so the pet feels alive: multi-axis bob/sway plus a little
+   squash-and-stretch so the motion reads as body language, not a static card. */
+.sprite[data-pose='idle'] { animation: petIdle 4.2s ease-in-out infinite; }
+.sprite[data-pose='thinking'] { animation: petThink 1.8s ease-in-out infinite; }
+.sprite[data-pose='working'] { animation: petWork 1.3s ease-in-out infinite; }
+.sprite[data-pose='excited'] { animation: petExcited 0.8s ease-in-out infinite; }
+.sprite[data-pose='happy'] { animation: petHappy 1.6s ease-in-out infinite; }
+.sprite[data-pose='listen'] { animation: petListen 1.5s ease-in-out infinite; }
+.sprite[data-pose='sleepy'] { animation: petSleep 3.8s ease-in-out infinite; }
+.sprite[data-pose='cute'] { animation: petCute 2.2s ease-in-out infinite; }
+.sprite[data-pose='confused'] { animation: petConfused 2s ease-in-out infinite; }
+.sprite[data-pose='frustrated'] { animation: petFrustrated 1.6s ease-in-out infinite; }
+
+@keyframes petIdle {
+  0%, 100% { transform: translateY(0) rotate(0deg) scale(1, 1); }
+  25% { transform: translateY(-6px) rotate(-1deg) scale(1.02, 0.98); }
+  50% { transform: translateY(0) rotate(0deg) scale(1, 1); }
+  75% { transform: translateY(-4px) rotate(1.2deg) scale(1.03, 0.97); }
+}
+@keyframes petThink {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  30% { transform: translateY(-3px) rotate(-2deg); }
+  70% { transform: translateY(-5px) rotate(2deg); }
+}
+@keyframes petWork {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  25% { transform: rotate(-2.6deg) translateY(-2px); }
+  75% { transform: rotate(2.6deg) translateY(-2px); }
+}
+@keyframes petExcited {
+  0% { transform: translateY(0) scale(1, 1); }
+  30% { transform: translateY(-16px) scale(0.94, 1.08); }
+  55% { transform: translateY(0) scale(1.05, 0.93); }
+  72% { transform: translateY(-8px) scale(0.98, 1.04); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+@keyframes petHappy {
+  0% { transform: translateY(0) scale(1, 1); }
+  40% { transform: translateY(-10px) scale(0.96, 1.06); }
+  70% { transform: translateY(0) scale(1.04, 0.95); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+@keyframes petListen {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  50% { transform: scale(1.05) rotate(-2deg); }
+}
+@keyframes petSleep {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(3px) scale(0.99, 0.99); }
+}
+@keyframes petCute {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(3deg) scale(1.03); }
+}
+@keyframes petConfused {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  25% { transform: translateX(-3px) rotate(-3deg); }
+  75% { transform: translateX(3px) rotate(3deg); }
+}
+@keyframes petFrustrated {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(-5px); }
+}
+
+/* ── action ring (an ellipse hugging the pet) ──────────────────────────── */
+
+/* The ring is the front door: every action the pet has, hung on an ellipse
+   around the artwork. Where each bubble goes — which side of the pet has room,
+   how far the ellipse sits from the art — is measured in ring.ts and arrives as
+   inline coordinates, so CSS owns only the look. Bubbles that no longer fit are
+   folded into the rail below, behind the toggle. */
+.ring {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  opacity: 0;
+  /* The container spans the whole pet, so it must stay click-through: the pet
+     itself is a click target underneath it. Only the bubbles take pointers. */
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+.ring.ringOpen { opacity: 1; }
+.ring .bubble {
+  position: absolute;
+  opacity: 0;
+  /* Closed bubbles must not take pointers: they sit over the pet's own edges,
+     and a click there is a petting, not an action. `pointer-events` does not
+     affect keyboard focus, so Tab still opens the ring below. */
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.5);
+}
+/* Toggling the class rebuilds the animation, so the stagger replays on every
+   hover. `backwards` (not `both`) matters: once the pop-in is over the bubbles
+   must fall back to their declared styles, or the filled animation state would
+   pin the transform and swallow the hover lift. */
+.ring.ringOpen .bubble,
+.ring:focus-within .bubble {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+  animation: ringIn 260ms cubic-bezier(0.34, 1.5, 0.64, 1) backwards;
+}
+@keyframes ringIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+/* Hover has to re-state the centring translate: a plain `scale()` would drop it
+   and the bubble would jump by half its own size. */
+.ring .bubble:hover { transform: translate(-50%, -50%) scale(1.12); }
+
+/* ── action rail (overflow, a column hung on the pet's free side) ──────── */
+
+/* Only the actions that did not fit the ring live here, so the rail's length
+   follows the roster instead of the screen: it is opened by the ring's toggle
+   and hangs beside the pet. Which side it hangs on — and how far it slides to
+   stay on screen — is decided in rail.ts and arrives as custom properties. */
+.rail {
+  position: absolute;
+  top: 50%;
+  z-index: 40;
+  /* Declared locally rather than inherited from the host's reset: the rail's
+     measured height feeds the placement maths in rail.ts, so its box model must
+     not depend on which app it is embedded in. */
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-overlay, #1f2430) 74%, transparent);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12));
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 22px rgba(0, 0, 0, 0.3));
+  backdrop-filter: blur(9px);
+  opacity: 0;
+  pointer-events: none;
+  transform:
+    translateY(calc(-50% + var(--rail-shift, 0px)))
+    translateX(var(--rail-x, 0px))
+    scale(var(--rail-scale, 0.94));
+  transition: opacity 150ms ease, transform 200ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+/* Clear of the ring, with the pet-facing corners squared off so the rail reads
+   as attached to whatever it hangs beside. The gap is set from the ring's
+   measured overhang: the rail sits on the side the ring does not fill, and the
+   default 10px would draw it straight through the ring's own bubbles. */
+.railLeft {
+  right: calc(100% + var(--rail-gap, 10px));
+  --rail-x: 8px;
+  --rail-in-x: 6px;
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+.railRight {
+  left: calc(100% + var(--rail-gap, 10px));
+  --rail-x: -8px;
+  --rail-in-x: -6px;
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
+}
+/* Focus opens the rail too, so its actions stay reachable from the keyboard
+   for a host who never hovers the pet. */
+.rail.railOpen,
+.rail:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  --rail-x: 0px;
+  --rail-scale: 1;
+}
+
+.bubble {
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.14));
+  background: color-mix(in srgb, var(--pet-accent) 22%, var(--dsw-alias-bg-layer-2, #222836));
+  color: var(--dsw-alias-label-primary, #e8ecf3);
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 22px rgba(0, 0, 0, 0.3));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+  opacity: 0;
+  transition: background 140ms ease, transform 140ms ease, color 140ms ease, opacity 120ms ease;
+}
+.rail.railOpen .bubble,
+.rail:focus-within .bubble {
+  opacity: 1;
+  animation: bubbleIn 260ms cubic-bezier(0.34, 1.5, 0.64, 1) backwards;
+}
+@keyframes bubbleIn {
+  from { opacity: 0; transform: translateX(var(--rail-in-x, 0px)) scale(0.6); }
+  to { opacity: 1; transform: none; }
+}
+.bubble:hover {
+  background: color-mix(in srgb, var(--pet-accent) 42%, var(--dsw-alias-bg-layer-2, #222836));
+}
+.rail .bubble:hover { transform: scale(1.1); }
+.bubble:focus-visible {
+  outline: 2px solid var(--pet-accent);
+  outline-offset: 2px;
+}
+/* The "on" state of an action: a solid accent chip. Two things matter here.
+   The ink is --pet-on-accent, never a literal, or the light theme's near-black
+   whale accent turns the whole bubble — glyph included — into a black disc.
+   And hover must not fall back to the 42% tint above: a white icon on that faint
+   grey is unreadable in exactly the same way. Declared after .bubble:hover at
+   equal specificity, so it wins while hovered too. */
+.bubbleActive,
+.bubbleActive:hover {
+  background: color-mix(in srgb, var(--pet-accent) 88%, var(--dsw-alias-bg-layer-2, #222836));
+  border-color: var(--pet-accent);
+  color: var(--pet-on-accent, #10141c);
+}
+.bubble svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+/* ── speech / mood caption bubble ─────────────────────────────────────── */
+
+/* The caption floats above the whole ring, not just the head: a bubble sits
+   directly over the pet's ears. */
+.speechBubble {
+  position: absolute;
+  bottom: calc(100% + 56px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 5px 11px;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-overlay, #1f2430);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12));
+  color: var(--dsw-alias-label-primary, #e8ecf3);
+  font-size: 12px;
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 22px rgba(0, 0, 0, 0.3));
+  animation: speechIn 220ms ease;
+}
+
+@keyframes speechIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.speechError {
+  border-color: rgba(255, 108, 108, 0.55);
+  color: #ff9a9a;
+  background: rgba(60, 28, 28, 0.9);
+  /* Failure hints carry a diagnostic trace, so let them wrap in full and be
+     selectable — a host can copy the verdict straight back to the author. */
+  max-width: 248px;
+  white-space: normal;
+  overflow: visible;
+  text-align: left;
+  line-height: 1.45;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* The growth read-out: a card, not a caption.
+   Sized to its content up to a readable cap, so three lines stay three lines
+   instead of wrapping into a column 250px wide, and with a copy button because
+   asking the host to drag a selection across a floating bubble is a poor way to
+   let them quote it. The horizontal slide that keeps it on screen arrives as a
+   custom property from the widget, which measures the pet. */
+.speechCard {
+  bottom: calc(100% + 56px);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  width: max-content;
+  max-width: min(340px, calc(100vw - 24px));
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 9px 9px 9px 12px;
+  border-radius: 14px;
+  text-align: left;
+  /* The read-out is laid out in lines; `pre-line` keeps them and still wraps
+     anything longer than the cap. */
+  white-space: pre-line;
+  line-height: 1.55;
+  transform: translateX(calc(-50% + var(--card-shift, 0px)));
+  animation: cardIn 220ms ease;
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateX(calc(-50% + var(--card-shift, 0px))) translateY(4px); }
+  to { opacity: 1; transform: translateX(calc(-50% + var(--card-shift, 0px))) translateY(0); }
+}
+.speechText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Selectable in the card only: the copy button is the fast path there, while the
+   one-line mood bubble should not sprout an I-beam cursor. */
+.speechCard .speechText {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.speechCopy {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.14));
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 140ms ease, background 140ms ease, color 140ms ease;
+}
+.speechCopy svg { width: 14px; height: 14px; display: block; }
+.speechCopy:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--pet-accent) 32%, transparent);
+}
+/* The tick confirms a copy *on the card*, whose fill is the theme's overlay —
+   light under the light theme, dark under the dark one. Writing it in the accent
+   paired two unrelated polarities: the robot's amber tick measured 1.87:1 on the
+   light card and 2.70:1 on the dark one, and silver-moon's blue 2.17:1 on the
+   dark one, so the confirmation was invisible exactly where it was needed. The
+   tick keeps the card's own ink and marks itself with the accent outline, which
+   is the one place the accent can sit on any fill and stay readable. */
+.speechCopyDone {
+  opacity: 1;
+  color: inherit;
+  border-color: var(--pet-accent);
+}
+
+/* ── typing fallback (when speech recognition cannot work) ────────────── */
+
+/* The input bar takes over the speech bubble's slot, so a hint raised while the
+   fallback is open steps above it. Hiding the hint instead (the previous
+   behaviour) discarded the only explanation of why speech failed, which made
+   every failure look like "nothing happened". */
+.speechRaised { bottom: calc(100% + 94px); }
+
+.inputBar {
+  position: absolute;
+  bottom: calc(100% + 56px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 244px;
+  padding: 5px 6px 5px 11px;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-overlay, #1f2430);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12));
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 22px rgba(0, 0, 0, 0.3));
+  animation: speechIn 220ms ease;
+}
+.inputField {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #e8ecf3);
+  font-family: inherit;
+  font-size: 12px;
+}
+.inputField::placeholder { color: var(--dsw-alias-label-tertiary, #8b93a7); }
+/* One accent fill for every primary surface — a bubble that is on, the send/gear
+   buttons, the save button. The 12% of surface colour is not decoration: mixing
+   the raw accent with it is what keeps a *text* button readable at every accent
+   polarity. Silver-moon's brand blue in the light theme carried 11px dark ink at
+   4.35:1 raw and carries it at 5.3:1 mixed. */
+.inputIcon {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--pet-accent) 88%, var(--dsw-alias-bg-layer-2, #222836));
+  color: var(--pet-on-accent, #10141c);
+}
+.inputIcon svg { width: 16px; height: 16px; display: block; }
+/* Filled with a label token this time, which flips with the theme as well, so
+   its ink comes from the matching label token rather than the accent's. */
+.inputIconActive {
+  background: var(--dsw-alias-label-primary, #e8ecf3);
+  color: var(--dsw-alias-label-primary-foreground, #10141c);
+}
+/* Local speech endpoint row, revealed from the gear in the input bar. Sits above
+   the raised hint slot so a failure caption and this row never collide. */
+.sttBar {
+  position: absolute;
+  bottom: calc(100% + 132px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 286px;
+  padding: 5px 6px 5px 11px;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-overlay, #1f2430);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12));
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 22px rgba(0, 0, 0, 0.3));
+  animation: speechIn 220ms ease;
+}
+.sttSave {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--pet-accent) 88%, var(--dsw-alias-bg-layer-2, #222836));
+  color: var(--pet-on-accent, #10141c);
+}
+
+/* The crash face: what is left of the pet if its render throws. Parked in the
+   corner the pet docks in by default, because the crashed render never got as far
+   as a position. Colours are the failure palette the error bubble already uses, so
+   the contrast audit covers them. */
+.petCrash {
+  position: fixed;
+  right: 18px;
+  bottom: 14px;
+  z-index: 60;
+  box-sizing: border-box;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 108, 108, 0.55);
+  background: rgba(60, 28, 28, 0.92);
+  color: #ff9a9a;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 22px rgba(0, 0, 0, 0.3));
+}
+.petCrash:hover { background: rgba(76, 34, 34, 0.96); }
+.petCrash:focus-visible { outline: 2px solid #ff9a9a; outline-offset: 2px; }
+
+/* ── music bar ────────────────────────────────────────────────────────── */
+
+/* Above the figure, over the pet's head — the same band the caption uses, and it
+   deliberately reuses it: the ring wraps the whole figure, so *every* height in
+   this overlay is inside a button's band (the caption has always overlapped the
+   top two). What must never happen is two pieces of text landing on each other,
+   which is what the first version of this bar did once its failure message
+   wrapped. So the bar is one short line, it sits where the caption sits, and the
+   widget hides the caption while the bar is showing.
+   Width is capped from the widget against the measured clearance: the pet docks
+   18px from the corner, so `100vw` is not the number that matters and a centred
+   bar of natural width ran 16px off the screen edge. */
+.musicBar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  /* Centred on the pet, then moved by however far the host dragged it. The offset
+     arrives as two custom properties because the arrival animation below writes
+     `transform` as well — a hardcoded translate here would be overridden for the
+     length of the animation and the bar would jump on its first frame. */
+  transform: translate(calc(-50% + var(--music-dx, 0px)), var(--music-dy, 0px));
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 24px));
+  padding: 5px 7px;
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-overlay, #1f2430);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12));
+  color: var(--dsw-alias-label-primary, #e8ecf3);
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 22px rgba(0, 0, 0, 0.3));
+  animation: musicIn 200ms ease;
+  /* The bar is a grip: the whole body drags it, so the pointer says so. The
+     controls opt back out with their own `cursor: pointer`. */
+  cursor: grab;
+  /* Restated from `.pet` rather than inherited: without it a press-and-drag on a
+     touch screen scrolls the page, and the pointer stream stops after one move. */
+  touch-action: none;
+}
+.musicBar[data-dragging='true'] { cursor: grabbing; }
+
+/* The bar's own arrival, because the shared `speechIn` hardcodes the centring
+   translate and would drop the drag offset for its 200ms. */
+@keyframes musicIn {
+  from { opacity: 0; transform: translate(calc(-50% + var(--music-dx, 0px)), calc(var(--music-dy, 0px) + 4px)); }
+  to { opacity: 1; transform: translate(calc(-50% + var(--music-dx, 0px)), var(--music-dy, 0px)); }
+}
+
+/* The controls get a row of their own: text plus seven buttons in one row needed
+   ~270px, which is wider than the clearance the dock leaves, so the text takes
+   the row above. */
+.musicRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+.musicSpacer { flex: 0 1 auto; }
+
+.musicIcon {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #aab3c2);
+}
+.musicIcon:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.08)); color: var(--dsw-alias-label-primary, #e8ecf3); }
+.musicIcon:focus-visible { outline: 2px solid var(--pet-accent); outline-offset: 1px; }
+.musicIcon svg { width: 15px; height: 15px; display: block; }
+
+/* The play/pause primary control carries the accent, so the bar has an obvious
+   anchor and the pet's current colour still shows while music plays. */
+.musicIconActive {
+  background: color-mix(in srgb, var(--pet-accent) 88%, var(--dsw-alias-bg-layer-2, #222836));
+  color: var(--pet-on-accent, #10141c);
+}
+.musicIconActive:hover { background: var(--pet-accent); color: var(--pet-on-accent, #10141c); }
+
+.musicMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 0 1px;
+}
+
+/* The folder panel, on its own surface directly above the bar.
+   Absolutely positioned rather than a third row of the bar for one reason: a row
+   of this panel is a filesystem path, whose max-content width is the whole path —
+   as a normal child it would stretch the bar to the 300px cap the moment it
+   opened. Out of flow it cannot, so the bar keeps the width its transport
+   buttons define and the path wraps inside that width instead. */
+.musicRoots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 7px;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-overlay, #1f2430);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12));
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 22px rgba(0, 0, 0, 0.3));
+  animation: speechIn 160ms ease;
+}
+
+.musicRootsPaths {
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--dsw-alias-label-tertiary, #7d8798);
+  /* A path has no spaces to break at on Windows, and it must never widen the
+     bar: it wraps mid-segment instead. `anywhere` also lets the flex item
+     shrink below its content width, which `break-word` alone does not. */
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.musicRootsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+
+.musicRootsButton {
+  padding: 3px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.14));
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #aab3c2);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.35;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.musicRootsButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--dsw-alias-label-primary, #e8ecf3);
+}
+.musicRootsButton:focus-visible { outline: 2px solid var(--pet-accent); outline-offset: 1px; }
+/* A disabled button is a button that cannot do anything right now (a folder is
+   being picked, or the host has no chooser at all). It stays visible and
+   explains itself instead of disappearing. */
+.musicRootsButton:disabled { opacity: 0.45; cursor: default; }
+
+.musicRootsNote {
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--dsw-alias-label-tertiary, #7d8798);
+  text-align: center;
+}
+
+.musicTitle {
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A failure is short by construction (one clause), so it never needs to wrap:
+   wrapping is what grew the bar upwards into the caption before. It is still
+   selectable — unlike the rest of the grip — so the instruction in the tooltip
+   can be copied out. */
+.musicTitle[data-error='true'] { font-size: 11px; user-select: text; }
+
+.musicSub {
+  font-size: 9.5px;
+  line-height: 1.2;
+  color: var(--dsw-alias-label-tertiary, #7d8798);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.musicTrack {
+  position: relative;
+  height: 2px;
+  margin-top: 2px;
+  border-radius: 2px;
+  background: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12));
+  overflow: hidden;
+}
+.musicTrack > i {
+  display: block;
+  height: 100%;
+  background: var(--pet-accent);
+  /* A progress fill, not a chip: it contains no glyph, so there is no ink to
+     name. `transparent` is written out rather than left implicit so the accent
+     audit in `test-accent-ink.mjs` can tell "deliberately textless" apart from
+     "forgot the ink" — that distinction is the whole point of the audit, and an
+     unstated exception would quietly weaken it. */
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sprite[data-pose] { animation: none; }
+  .petShadow { animation: none; }
+  .pet:hover .petSprite { transform: none; }
+  /* The reveal must survive as a plain opacity flip: the bubbles are hidden by
+     the animation as well as by their own opacity, so cancelling the animation
+     alone would leave the ring empty. */
+  .rail, .ring { transition: none; }
+  .rail.railOpen .bubble,
+  .rail:focus-within .bubble,
+  .ring.ringOpen .bubble,
+  .ring:focus-within .bubble { animation: none; transition: none; }
+  .petIn, .speechBubble, .inputBar, .sttBar, .musicBar { animation: none; }
+  .petGlow { transition: none; }
+}

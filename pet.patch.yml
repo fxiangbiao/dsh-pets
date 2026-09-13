@@ -1,0 +1,27 @@
+# Patch overlay that adds the electronic-pet client plugin to a running
+# DeepSeek Harness web profile WITHOUT rebuilding the harness.
+#
+# Apply it to an installed harness whose node_modules can resolve
+# @deepseek-ai/dsh-client-ui-pet (i.e. the package is installed so its
+# lib/client.js is servable) with:
+#
+#   dsh web --patch D:\ALAN\Codes\dsh-pets\pet.patch.yml
+#
+# The `- insert` form appends a row to the browser plugin roster, matching how
+# the web-app bundle declares its own UI plugins (see packages/bundle/web-app/cordis.patch.yml).
+- insert:
+    - id: ui-pet
+      name: '@deepseek-ai/dsh-client-ui-pet'
+    # Serves the pet's own music out of the folders configured below: a scan, a
+    # track listing, and byte-ranged streaming. It runs inside the host process
+    # (Node, unlike the Python speech service) and stops when this plugin
+    # unloads, so it cannot leave an orphan behind.
+    #
+    # `?v=` is a cache-buster for the host loader: bump it on EVERY edit to
+    # pet-music.mjs, or a restart will keep serving the previous version.
+    - id: pet-music
+      name: 'file:///D:/ALAN/Codes/dsh-pets/pet-music.mjs?v=2'
+      config:
+        port: 8791
+        roots:
+          - 'D:\Musics'
