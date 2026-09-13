@@ -108,6 +108,40 @@
 
 `.m4a/.mp4` 用的是 MP4 原子**不是** ID3 —— 早期方案对 `.m4a` 去读 ID3 是设计缺陷，已修正。
 
+**`.flac` 没有专门的读取器**：它落进 `parseId3` 那条路径，而 `fLaC` 魔数不是 ID3 头，所以解析必然空手而归，
+再由 `artistTitleFromName` 从文件名兜底。实测 `D:\Musics` 里两首 flac 的标题/艺人就是这样来的
+（`李雨婷 - 烟火里的尘埃(…).flac` → artist=李雨婷）。Vorbis 注释块没读，是已知空缺，不是 bug。
+
+## 4b. 支持的格式：能列出 ≠ 能播
+
+两件事必须分开看：
+
+- **服务端白名单**（`pet-music.mjs` 的 `extensions`）决定"扫不扫、列不列出来"：
+  `.mp3 .m4a .m4b .mp4 .aac .flac .wav .ogg .opus .wma`，配 `CONTENT_TYPES` 给出 MIME。
+- **能不能出声**只取决于浏览器用的系统编解码器（Edge = Windows Media Foundation）。
+  `/plugins/` 不发解码器，插件里也没有 —— 扩展名在白名单里不等于能播。
+
+本机实测（`_probe/probe-flac-path.cjs`，2026-09-13，Edge + 真实文件 + 真实 HTTP）：
+
+| 格式 | 结果 | 证据 |
+|---|---|---|
+| `.flac` | ✅ 真出声 | 5.4 分钟 / 66.6 MB 的文件 `duration=326.07s`，`play()` 后 1.2 秒走带 1.11 秒 |
+| `.mp3` | ✅ 真出声（对照组） | 同页形状、同页手势，走带 1.16 秒 |
+| `.wav` / `.mp4` / `.m4a` | ✅ 见 `probe-mp4-path.cjs` / 早前实测 | mp4 那条连 moov 在尾部的情况都验过 |
+
+`canPlayType` 只能当参考：它对 `audio/flac` 回 `probably`，对 `audio/x-flac` 回空串 —— 而空串**不代表**不支持。
+
+### 一个会伪装成"格式不支持"的坑
+
+宠物播放器给音频元素设了 `crossOrigin`（它要接 WebAudio 分析），于是请求变成 CORS 检查；
+服务端只回它启动时那个 `corsOrigin`。**origin 不匹配时，媒体元素报的是
+`MEDIA_ELEMENT_ERROR: Format error`** —— 一个纯网络拒绝，长得和解码失败一模一样。
+
+写这条时的原始经过值得记住：第一次用 `about:blank` 页面（origin 为 `null`）探针，
+拿到 `Format error` 就差点写成"Edge 解不了 flac"；直到发现服务被 `--cors-origin http://127.0.0.1:3080`
+绑住、而页面 origin 是 `null`，重做成"探针自带一个 service 实例 + 页面 origin 可配"才得到真结论。
+所以探针现在有第三相位：**故意**用被拒 origin 复现那个 `Format error`，证明它是 CORS 而不是编解码器。
+
 ## 5. 音频总线（`audioBus.ts`）
 
 宠物原本就有一条音频路径（神经语音的 `Audio` 元素），音乐是第二条。与其让两边互相知道，

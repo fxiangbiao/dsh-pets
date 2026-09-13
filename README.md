@@ -15,7 +15,7 @@ DSH（DeepSeek Harness）里那只浮动电子宠物的全部内容：插件源�
 | 语音 | 本地 STT（faster-whisper）听你说话 + 本地 TTS 出声，讲完自动送进当前会话 |
 | 任务反应 | 监听会话事件：思考 / 干活 / 出错 / 干完，宠物用表情和气泡跟着反应 |
 | 成就 | 8 个成就，靠抚摸、换肤、聊天、陪伴时长等统计解锁 |
-| 本机音乐 | 扫描本机目录、在宠物头顶放播放机（可拖动 / 可关掉 / 可换播放目录），mp3、m4a、flac、wav、mp4 都能放 |
+| 本机音乐 | 扫描本机目录、在宠物头顶放播放机（可拖动 / 可关掉 / 可换播放目录）；mp3、m4a、flac、wav、mp4 都能真出声 |
 
 明暗主题都有独立的墨色方案，由 `_probe/shot-contrast.cjs` 的 120 个图面把关；插件的任何渲染崩溃会
 退化成右下角一个可点重试的角标，而不是整只宠物消失。
@@ -89,15 +89,18 @@ $env:NODE_PATH='D:\ALAN\Codes\deepseek-harness\apps\web\node_modules'
 node _probe\shot-accent.cjs      # 42 项：强调色墨色（含像素回读）
 node _probe\shot-contrast.cjs    # 120 个图面：全量对比度
 node _probe\probe-mp4-path.cjs   # mp4 当音乐放（项数随盘上的 mp4 数变）
+node _probe\probe-flac-path.cjs  # 15 项：flac 真出声（自带 service 实例，项数随盘上的 flac 数变）
 node _probe\shot-music.cjs       # 28 项：音乐服务 + 音频总线 + 闪避（每个用例单开页面）
 node _probe\shot-layout.cjs      # 87 项：真组件重叠/溢出 + 拖动 + 关闭/重开 + 换播放目录 + 崩溃面
 ```
 
-当前基线：**Node 1130 + 浏览器 302，全过**。每项含义、前置条件与写新探针的约定见 `docs/probe-harness.md`，
-其中两条最容易踩：
+当前基线：**Node 1130 + 浏览器 317，全过**。每项含义、前置条件与写新探针的约定见 `docs/probe-harness.md`，
+其中三条最容易踩：
 
 - 别和"整个工作区构建"同时跑 —— `test-live-chunks` / `test-chunk-latency` 打的是本机语音服务，
   机器被占满时会超时（不是代码坏了）。
+- 播放类探针必须排除 **CORS 假象**：媒体元素在 origin 不匹配时报的是 `Format error`，
+  和"编解码不支持"一模一样（见 `probe-flac-path.cjs` 的相位设计）。
 - `shot-layout.cjs` 挂的是构建产物里的**真组件**：量之前等 CSS 动画结束、把宠物钉在固定位置，
   后两阶段用**真鼠标** + 真音乐服务（合成 pointerId 会让 `setPointerCapture` 抛异常，
   而"点一下才出声"必须是真的用户手势）。
@@ -149,6 +152,9 @@ node _probe\shot-layout.cjs      # 87 项：真组件重叠/溢出 + 拖动 + �
    改文件用编辑器或 Node；`.ps1` 里不要内嵌 CJK 路径（走参数传）。
 7. **音乐服务默认对回环放开 CORS**（`corsOrigin: '*'`）：接 WebAudio 做分析就必须带 `crossOrigin`
    + `Access-Control-Allow-Origin`，代价是**本机任何网页都能读到你的曲目和音频字节**；
-   要收紧就改成 `http://127.0.0.1:3080`。
-8. **浏览器解不了的格式就是解不了**：走系统编解码器，mp3/m4a/mp4/wav/flac 实测可用，
-   wma/ape 之类大概率不行 —— 失败会给出可读原因，不会转圈。
+   要收紧就改成 `http://127.0.0.1:3080`。**收紧后 origin 不匹配的页面播放会报
+   `MEDIA_ELEMENT_ERROR: Format error`** —— 这是 CORS 拒绝，不是解码失败，别照着"格式不支持"去查。
+8. **能不能解取决于系统编解码器，不取决于扩展名**：服务端白名单（10 种）只决定"列不列出来"。
+   本机实测（`_probe/probe-flac-path.cjs`）：mp3 / m4a / mp4 / wav / **flac 都真出声**
+   （flac 走 `<audio>`，5.4 分钟的文件 1.2 秒内正常走带）；wma 之类 `canPlayType` 可能点头但解码大概率失败。
+   失败会给出可读原因，不会转圈。

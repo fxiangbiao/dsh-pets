@@ -3,7 +3,7 @@
 两条轨道：**Node 探针**（把真实模块转译后在 Node 里直接驱动，毫秒级、无需浏览器）和
 **浏览器探针**（Playwright + Edge，量真实渲染出来的东西）。
 
-当前基线：**Node 1130 项 + 浏览器 302 项，全过。**
+当前基线：**Node 1130 项 + 浏览器 317 项，全过。**
 
 探针读的是**主源** `dsh-pets/plugin/src/client`（不是 harness 里的构建副本），所以：
 改了代码不跑 `sync-to-harness.mjs` 也能立刻测 —— 但 GUI 会落后；反过来，"测试通过"永远意味着**主源**是好的。
@@ -55,6 +55,7 @@ $env:NODE_PATH='D:\ALAN\Codes\deepseek-harness\apps\web\node_modules'
 node _probe\shot-accent.cjs      # 42 项：强调色 on/off 状态、两主题三形象、像素回读
 node _probe\shot-contrast.cjs    # 120 个图面：全量前景/背景对比度（78 受判 + 42 宿主题对照）
 node _probe\probe-mp4-path.cjs   # .mp4 当音乐放（元数据/真出声/跨源 analyser/moov 在尾部）；项数随盘上的 mp4 数变
+node _probe\probe-flac-path.cjs  # 15 项：.flac 到底能不能出声（自带一个 service 实例 + 可配页面 origin）
 node _probe\shot-music.cjs       # 28 项：音乐服务 + 音频总线 + 闪避 + 客户端端到端
 node _probe\shot-layout.cjs      # 87 项：真组件重叠/溢出 + 真鼠标拖动 + 真服务下换目录 + 关闭/重开 + 崩溃面
 ```
@@ -65,6 +66,13 @@ node _probe\shot-layout.cjs      # 87 项：真组件重叠/溢出 + 真鼠标�
 - `probe-mp4-path.cjs` 的两个坑写在文件注释里，都曾把结论带偏成"编解码不支持"：
   页面必须由 `http://127.0.0.1` 提供（不透明源访问不了回环地址空间），且播放前必须有一次真实点击
   （自动播放策略会让 `play()` 直接 reject）。它验的是"音乐功能能不能吃 mp4"这条产品前提。
+- `probe-flac-path.cjs` 自带一个 `pet-music.mjs` 实例（默认 8792，`--cors-origin` 由探针指定），
+  因为"能不能解 flac"这件事**必须把 CORS 排除掉才能问**：宠物播放器带 `crossOrigin`，
+  而服务端只回它启动时那个 origin —— origin 不匹配时媒体元素报的是
+  `MEDIA_ELEMENT_ERROR: Format error`，一个纯网络拒绝，长得和解码失败一模一样。
+  第一次用 `about:blank`（origin 为 `null`）跑就吃了这个假象。它因此分相位：
+  无 CORS 解码 → 允许 origin 带 CORS → **故意**被拒 origin 复现那个 Format error → mp3 对照。
+  它不碰用户正在跑的 8791 实例。
 - `shot-music.cjs` **每个用例单开一个页面**（`tone` / `local` / `bus` / `client`）。原因是踩过的：
   同一个页面里，一次用户手势只够起一条可用的音频链，前一个用例消耗掉之后，
   后面所有 analyser 读数都是静音 —— 连页面内自己生成的测试音都是静音的，
